@@ -4,6 +4,7 @@ from os import getenv
 from dotenv import load_dotenv
 import boto3
 from my_args import vpc_arguments
+import urllib
 
 parser = argparse.ArgumentParser(
     description="CLI program that helps with Aws VPC.",
@@ -37,7 +38,6 @@ def main():
                          }])
                 print(f'{args.tag} tag was assigned to vpc: {vpc_id}')
                 
-
             if args.create_internet_gateway:
                 result = aws_ec2_client.create_internet_gateway()
                 print(f"Successfully created igw: {igw_id}")
@@ -77,6 +77,102 @@ def main():
                                                 
             if args.assign_read_policy == "True":
                 print(1)
+                
+            if args.create_sg:
+              #create security group
+              result = aws_ec2_client.create_security_group("ec2-sg", "security group description", args.vpc_id)
+              group_id = result.get("GroupId")
+              print(f"Security Group id for vpc: {args.vpc_id} is {group_id}")
+              
+              # add http access to this security group
+              response = aws_ec2_client.authorize_security_group_ingress(
+                GroupId=group_id,
+                IpProtocol='tcp',
+                FromPort=80,
+                ToPort=80,
+                CidrIp='0.0.0.0/0')
+              
+              if response.get("Return"):
+                print(f"Http port was open for {group_id} and vpc: {args.vpc_id}")
+              else:
+                print("SSH PORT FAILURE")
+                
+              # add ssh access for current machine.
+              my_ip = urllib.request.urlopen("https://ident.me").read().decode("utf8")
+
+              my_ip_cidr = f"{my_ip}/32"
+              response = aws_ec2_client.authorize_security_group_ingress(
+                CidrIp= my_ip_cidr,
+                FromPort=22,
+                GroupId=group_id,
+                IpProtocol='tcp',
+                ToPort=22,
+              )
+              if response.get("Return"):
+                print(f"Ssh port for security_group {group_id} vpc_id: {vpc_id} & public ip: {my_ip} was added successfully.")
+              else:
+                print("SSH PORT FAILURE")
+                
+              #create keypair
+              response = aws_ec2_client.create_key_pair(KeyName="ec2keyfromcli", KeyType="rsa",                                        KeyFormat="pem")
+              key_id = response.get("KeyPairId")
+              
+              with open(f"ec2keyfromcli.pem", "w") as file:
+                file.write(response.get("KeyMaterial"))
+              print(f"Key pair created: {key_id}")
+                
+              # create and run instance with previous keypair
+              
+              response = aws_ec2_client.run_instances(
+              BlockDeviceMappings=[
+                {
+                  "DeviceName": "/dev/sda1",
+                  "Ebs": {
+                    "DeleteOnTermination": True,
+                    "VolumeSize": 10,
+                    "VolumeType": "gp2",
+                    "Encrypted": False
+                  },
+                },
+              ],
+              ImageId="ami-0261755bbcb8c4a84",
+              InstanceType="t2.micro",
+              KeyName="ec2keyfromcli",
+              MaxCount=1,
+              MinCount=1,
+              Monitoring={"Enabled": True},
+              # SecurityGroupIds=[
+              #     sg_id,
+              # ],
+              # SubnetId=subnet_id,
+              UserData="""#!/bin/bash
+          echo "Hello I am from user data" > info.txt
+          """,
+              InstanceInitiatedShutdownBehavior="stop",
+              NetworkInterfaces=[
+                {
+                  "AssociatePublicIpAddress": True,
+                  "DeleteOnTermination": True,
+                  "Groups": [
+                    group_id,
+                  ],
+                  "DeviceIndex": 0,
+                  "SubnetId": subnet_id,
+                },
+              ],
+            )
+
+            for instance in response.get("Instances"):
+              instance_id = instance.get("InstanceId")
+              print("InstanceId - ", instance_id)
+            # pprint(response)
+
+            # Create a name tag for the instance
+            tag = {'Key': 'Name', 'Value': "test-instance"}
+
+            # Assign the name tag to the instance
+            aws_ec2_client.create_tags(Resources=[instance_id], Tags=[tag])
+            
 
 def enable_auto_public_ips(client, subnet_id, action):
   new_state = True if action == "enable" else False
