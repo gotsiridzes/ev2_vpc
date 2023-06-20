@@ -107,4 +107,16 @@ def vpc_arguments(parser):
         default="False"
     )
 
+    parser.add_argument(
+        "-csg",
+        "--create_sg",
+        help="flag to create aws ec2 instance, open http and ssh ports.",
+        choices=["False", "True"],
+        type=str,
+        nargs="?",
+        const="True",
+        default="False"
+    )
+    
+
     return parser
